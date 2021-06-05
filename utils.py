@@ -23,7 +23,7 @@ class Recommendation:
 
     def __init__(self, user_id: int, recommendations: List[int], interactions: pd.DataFrame) -> None:
         if len(recommendations) > 15:
-            raise ValueError("Invalid number of reccomendations")
+            raise ValueError("Invalid number of recommendations")
         elif any(has_seen(user_id, track_id, interactions) for track_id in recommendations):
             raise ValueError(f"User {user_id} has invalid recommendations: {recommendations}.")
         self.user_id = user_id
