@@ -37,3 +37,7 @@ class Recommendation:
             p.write(str(self))
 
 
+class Recommender:
+    pass
+
+
