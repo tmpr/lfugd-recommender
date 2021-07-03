@@ -1,14 +1,16 @@
-from abc import abstractmethod
 from dataclasses import dataclass
-from utils import interaction_matrix
-from load_data import split
 from numbers import Real
 from pathlib import Path
 from typing import Iterable, List
 
 import numpy as np
 import pandas as pd
+import sklearn.decomposition as decomp
+import sklearn.manifold as mf
 from tqdm import tqdm
+
+from load_data import split
+from utils import interaction_matrix
 
 
 def sorted_by_popularity(matrix) -> list:
@@ -37,13 +39,6 @@ class Recommendation:
             p.write(str(self))
 
 
-def rank(user_interactions: pd.Series, recommendations: Iterable[int]) -> Real:
-    for i, track_id in enumerate(recommendations, start=1):
-        if user_interactions[track_id]:
-            return i
-    return float('inf')
-
-
 class Recommender:
 
     def __init__(self, users: pd.DataFrame, interactions: pd.DataFrame, tracks: pd.DataFrame) -> None:
@@ -52,8 +47,10 @@ class Recommender:
         self.tracks = tracks
         self.full_matrix = interaction_matrix(self.users, self.tracks, self.interactions)
 
-    @abstractmethod
     def recommend(self, user_id: int, k: int, matrix: np.array = None) -> Recommendation:
+        return Recommendation(user_id=user_id, track_ids=[-1])
+
+    def prepare_eval(self, train_matrix: np.ndarray = None) -> None:
         pass
 
     def evaluate(self, n_splits: int = 5, train_test_proportion: float = 0.2) -> np.ndarray:
@@ -67,6 +64,8 @@ class Recommender:
             test_matrix = interaction_matrix(users, items=self.tracks, interactions=test)
             train_matrix = interaction_matrix(users, items=self.tracks, interactions=train)
 
+            self.prepare_eval(train_matrix)
+
             mrr_s.append(self.mrr(train_matrix, test_matrix))
 
         return np.mean(mrr_s)
@@ -76,10 +75,17 @@ class Recommender:
 
         for i, user_interactions in tqdm(enumerate(test_matrix), desc=f"Computing MRR split", total=len(test_matrix)):
             recommendations = self.recommend(i, 15, matrix=train_matrix)
-            rank_result = rank(user_interactions, recommendations.track_ids)
+            rank_result = self.rank(user_interactions, recommendations.track_ids)
             mrr += 1 / rank_result
 
         return mrr / len(test_matrix)
+
+    @staticmethod
+    def rank(user_interactions: pd.Series, recommendations: Iterable[int]) -> Real:
+        for i, track_id in enumerate(recommendations, start=1):
+            if user_interactions[track_id]:
+                return i
+        return float('inf')
 
 
 class TopKRecommender(Recommender):
@@ -102,7 +108,70 @@ class TopKRecommender(Recommender):
                                if not user_has_seen[track_id]][:k])
 
 
-class SVDRecommender(Recommender):
+class KNNRecommender(Recommender):
+
+    def __init__(self, users: pd.DataFrame, interactions: pd.DataFrame, tracks: pd.DataFrame, k_neighbors: int) -> None:
+        super().__init__(users, interactions, tracks)
+        self.k_neighbors = k_neighbors
+
+    def nearest_neighbors(self, user_id: int, matrix: np.ndarray = None) -> np.ndarray:
+        user = matrix[user_id]
+        closest = sorted(range(len(matrix)), key=lambda other_user_id:
+                         np.linalg.norm(user - matrix[other_user_id], ord=2))[:self.k_neighbors]
+
+        return np.array([neighbor for neighbor in closest if user_id != neighbor])
 
     def recommend(self, user_id: int, k: int, matrix: np.array = None) -> Recommendation:
-        return super().recommend(user_id, k, matrix=matrix)
+        matrix = matrix if matrix is not None else self.full_matrix
+        neighbors = self.nearest_neighbors(user_id, matrix)
+        centroid = np.mean(matrix[neighbors], axis=0)
+
+        user_has_seen = matrix[user_id]
+
+        if not any(track for track in user_has_seen):
+            track_ids = [track_id for track_id in sorted_by_popularity(matrix) if not user_has_seen[track_id]][:k]
+        else:
+            track_ids = sorted(range(len(centroid)), key=lambda i: centroid[i])
+            track_ids = [track_id for track_id in track_ids if not user_has_seen[track_id]]
+
+        return Recommendation(user_id, track_ids[:k])
+
+
+class SVDRecommender(KNNRecommender):
+
+    def __init__(self, users: pd.DataFrame, interactions: pd.DataFrame, tracks: pd.DataFrame) -> None:
+        super().__init__(users, interactions, tracks, k_neighbors=5)
+        self.svd = decomp.TruncatedSVD(n_components=100)
+        self.svd.fit(self.full_matrix)
+        self.densed = self.svd.transform(self.full_matrix)
+
+    def prepare_eval(self, train_matrix: np.ndarray = None) -> None:
+        self.svd = decomp.TruncatedSVD(n_components=100)
+        self.svd.fit(train_matrix)
+        self.densed = self.svd.transform(train_matrix)
+
+    def nearest_neighbors(self, user_id: int, matrix: np.ndarray = None) -> np.ndarray:
+        return super(SVDRecommender, self).nearest_neighbors(user_id, matrix=self.densed)
+
+
+class TSNERecommender(KNNRecommender):
+
+    def __init__(self, users: pd.DataFrame, interactions: pd.DataFrame, tracks: pd.DataFrame, k_neighbors: int) -> None:
+        super().__init__(users, interactions, tracks, k_neighbors=k_neighbors)
+        self.downprojected = None
+
+    def prepare_eval(self, train_matrix: np.ndarray = None) -> None:
+        self.downprojected = mf.TSNE(n_components=3, perplexity=50).fit_transform(train_matrix)
+
+    def nearest_neighbors(self, user_id: int, matrix: np.ndarray = None) -> np.ndarray:
+        return super(TSNERecommender, self).nearest_neighbors(user_id, matrix=self.downprojected)
+
+
+class AgeRecommender(TopKRecommender):
+
+    def __init__(self, users: pd.DataFrame, interactions: pd.DataFrame, tracks: pd.DataFrame) -> None:
+        super(AgeRecommender, self).__init__(users, interactions, tracks)
+
+        self.age_groups = {
+
+        }

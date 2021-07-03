@@ -15,6 +15,6 @@ def interaction_matrix(users: pd.DataFrame, items: pd.DataFrame, interactions: p
     res = np.zeros(shape=(len(users) + 100, len(items) + 100))
     for _, interaction in tqdm(interactions.iterrows(), desc="Constructing matrix", total=len(interactions)):
         res[interaction.user_id][interaction.track_id] = interaction.n_interactions
-    for i, row in enumerate(res):
-        res[i] /= (sum(row) or 1)
+    # for i, row in enumerate(res):
+    #     res[i] /= (sum(row) or 1)
     return res
