@@ -1,3 +1,12 @@
 *.pdf
 data
 
+.~lock*
+
+report*
+rec*
+
+__pycache__
+.idea
+
+.ipynb_checkpoints
